@@ -1,0 +1,14 @@
+Third-party components used for legacy .doc support
+
+1. NPOI 2.3.0 and NPOI.HWPF 2.3.0
+   Copyright NPOI contributors.
+   Licensed under the Apache License 2.0.
+   Full license: licenses/NPOI-Apache-2.0.txt
+
+2. SharpZipLib 0.86.0
+   Copyright the SharpZipLib contributors.
+   Distributed under its project license.
+   Full license: licenses/SharpZipLib-GPL-2.0.txt
+
+These libraries are embedded into the executable so the tool can process
+Word 97-2003 .doc files without requiring Microsoft Office.

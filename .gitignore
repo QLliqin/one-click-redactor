@@ -1,0 +1,34 @@
+# Local agent and editor state
+.agents/
+.codex/
+.vscode/
+.idea/
+
+# Build output is published through GitHub Releases
+*.exe
+*.pdb
+bin/
+obj/
+
+# Case materials and generated redacted copies
+*.doc
+*.docx
+*.docm
+*.xls
+*.xlsx
+*.xlsm
+*.ppt
+*.pptx
+*.pptm
+*_已脱敏*
+
+# Reports and case-specific custom rules may contain sensitive data
+*.脱敏报告.txt
+最近一次脱敏报告.txt
+命令行脱敏报告.txt
+脱敏补充规则.txt
+
+# Temporary files
+*.tmp
+*.log
+~$*
