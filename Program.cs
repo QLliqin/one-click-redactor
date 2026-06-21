@@ -6,6 +6,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
@@ -201,27 +202,45 @@ namespace OneClickRedactor
 
     internal sealed class MainForm : Form
     {
-        private readonly ListBox fileList;
-        private readonly TextBox logBox;
-        private readonly Button addFilesButton;
-        private readonly Button addFolderButton;
-        private readonly Button clearButton;
-        private readonly Button startButton;
-        private readonly Button openRuleButton;
-        private readonly CheckBox includeSubfoldersCheckBox;
-        private readonly CheckBox addressGuessCheckBox;
-        private readonly ProgressBar progressBar;
-        private readonly Label statusLabel;
-        private readonly BackgroundWorker worker;
+        private static readonly Color Navy = Color.FromArgb(16, 61, 105);
+        private static readonly Color PrimaryBlue = Color.FromArgb(18, 99, 190);
+        private static readonly Color PrimaryBlueHover = Color.FromArgb(13, 79, 153);
+        private static readonly Color Canvas = Color.FromArgb(244, 247, 250);
+        private static readonly Color Border = Color.FromArgb(214, 222, 231);
+        private static readonly Color MutedText = Color.FromArgb(92, 105, 119);
+        private static readonly Color Success = Color.FromArgb(16, 118, 68);
+        private static readonly Color Danger = Color.FromArgb(195, 57, 57);
+
+        private DoubleBufferedDataGridView fileGrid;
+        private DoubleBufferedDataGridView logGrid;
+        private Panel emptyStatePanel;
+        private Button addFilesButton;
+        private Button addFolderButton;
+        private Button clearButton;
+        private Button startButton;
+        private Button openRuleButton;
+        private CheckBox includeSubfoldersCheckBox;
+        private CheckBox addressGuessCheckBox;
+        private ProgressBar progressBar;
+        private Label statusLabel;
+        private Label fileCountLabel;
+        private Label logCountLabel;
+        private Label batchSummaryLabel;
+        private BackgroundWorker worker;
         private readonly List<string> files;
 
         public MainForm()
         {
             Text = "一键脱敏工具";
-            Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
+            Font = new Font("Microsoft YaHei UI", 9.25F, FontStyle.Regular, GraphicsUnit.Point);
             StartPosition = FormStartPosition.CenterScreen;
-            MinimumSize = new Size(900, 620);
-            Size = new Size(980, 700);
+            MinimumSize = new Size(960, 680);
+            Size = new Size(1240, 820);
+            BackColor = Canvas;
+            AutoScaleMode = AutoScaleMode.Dpi;
+            KeyPreview = true;
+            DoubleBuffered = true;
+            Icon = ShellStockIcons.GetIcon(77, false);
             AllowDrop = true;
             DragEnter += MainForm_DragEnter;
             DragDrop += MainForm_DragDrop;
@@ -231,140 +250,29 @@ namespace OneClickRedactor
             var root = new TableLayoutPanel();
             root.Dock = DockStyle.Fill;
             root.ColumnCount = 1;
-            root.RowCount = 5;
-            root.Padding = new Padding(14);
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 62));
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 48));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+            root.RowCount = 6;
+            root.Padding = new Padding(0);
+            root.BackColor = Canvas;
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 52));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 48));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
             Controls.Add(root);
 
-            var header = new TableLayoutPanel();
-            header.Dock = DockStyle.Fill;
-            header.ColumnCount = 2;
-            header.RowCount = 1;
-            header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
-            root.Controls.Add(header, 0, 0);
+            root.Controls.Add(BuildHeader(), 0, 0);
+            root.Controls.Add(BuildToolbar(), 0, 1);
+            root.Controls.Add(BuildFileSection(), 0, 2);
+            root.Controls.Add(BuildOptionsStrip(), 0, 3);
+            root.Controls.Add(BuildLogSection(), 0, 4);
+            root.Controls.Add(BuildStatusBar(), 0, 5);
 
-            var titlePanel = new Panel();
-            titlePanel.Dock = DockStyle.Fill;
-            header.Controls.Add(titlePanel, 0, 0);
-
-            var titleLabel = new Label();
-            titleLabel.AutoSize = true;
-            titleLabel.Font = new Font(Font.FontFamily, 17F, FontStyle.Bold);
-            titleLabel.Text = "一键脱敏 doc / docx / xlsx / pptx / txt / csv";
-            titleLabel.Location = new Point(0, 0);
-            titlePanel.Controls.Add(titleLabel);
-
-            var subtitleLabel = new Label();
-            subtitleLabel.AutoSize = true;
-            subtitleLabel.ForeColor = Color.FromArgb(90, 90, 90);
-            subtitleLabel.Text = "原文件不会被修改；输出文件默认保存在原目录，文件名追加“_已脱敏”。";
-            subtitleLabel.Location = new Point(2, 34);
-            titlePanel.Controls.Add(subtitleLabel);
-
-            openRuleButton = new Button();
-            openRuleButton.Dock = DockStyle.Top;
-            openRuleButton.Height = 34;
-            openRuleButton.Text = "编辑补充规则";
-            openRuleButton.Click += OpenRuleButton_Click;
-            header.Controls.Add(openRuleButton, 1, 0);
-
-            var listGroup = new GroupBox();
-            listGroup.Dock = DockStyle.Fill;
-            listGroup.Text = "待处理文件（可拖拽文件或文件夹到这里）";
-            root.Controls.Add(listGroup, 0, 1);
-
-            fileList = new ListBox();
-            fileList.Dock = DockStyle.Fill;
-            fileList.HorizontalScrollbar = true;
-            listGroup.Controls.Add(fileList);
-
-            var buttonPanel = new TableLayoutPanel();
-            buttonPanel.Dock = DockStyle.Fill;
-            buttonPanel.ColumnCount = 7;
-            buttonPanel.RowCount = 1;
-            buttonPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
-            buttonPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
-            buttonPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
-            buttonPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));
-            buttonPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
-            buttonPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            buttonPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
-            root.Controls.Add(buttonPanel, 0, 2);
-
-            addFilesButton = new Button();
-            addFilesButton.Text = "添加文件";
-            addFilesButton.Dock = DockStyle.Fill;
             addFilesButton.Click += AddFilesButton_Click;
-            buttonPanel.Controls.Add(addFilesButton, 0, 0);
-
-            addFolderButton = new Button();
-            addFolderButton.Text = "添加文件夹";
-            addFolderButton.Dock = DockStyle.Fill;
             addFolderButton.Click += AddFolderButton_Click;
-            buttonPanel.Controls.Add(addFolderButton, 1, 0);
-
-            clearButton = new Button();
-            clearButton.Text = "清空";
-            clearButton.Dock = DockStyle.Fill;
             clearButton.Click += ClearButton_Click;
-            buttonPanel.Controls.Add(clearButton, 2, 0);
-
-            includeSubfoldersCheckBox = new CheckBox();
-            includeSubfoldersCheckBox.Text = "文件夹含子目录";
-            includeSubfoldersCheckBox.Checked = true;
-            includeSubfoldersCheckBox.Dock = DockStyle.Fill;
-            includeSubfoldersCheckBox.TextAlign = ContentAlignment.MiddleLeft;
-            buttonPanel.Controls.Add(includeSubfoldersCheckBox, 3, 0);
-
-            addressGuessCheckBox = new CheckBox();
-            addressGuessCheckBox.Text = "加强地址模糊识别";
-            addressGuessCheckBox.Checked = true;
-            addressGuessCheckBox.Dock = DockStyle.Fill;
-            addressGuessCheckBox.TextAlign = ContentAlignment.MiddleLeft;
-            buttonPanel.Controls.Add(addressGuessCheckBox, 4, 0);
-
-            startButton = new Button();
-            startButton.Text = "开始脱敏";
-            startButton.Dock = DockStyle.Fill;
-            startButton.Font = new Font(Font.FontFamily, 10F, FontStyle.Bold);
             startButton.Click += StartButton_Click;
-            buttonPanel.Controls.Add(startButton, 6, 0);
-
-            var logGroup = new GroupBox();
-            logGroup.Dock = DockStyle.Fill;
-            logGroup.Text = "处理日志";
-            root.Controls.Add(logGroup, 0, 3);
-
-            logBox = new TextBox();
-            logBox.Dock = DockStyle.Fill;
-            logBox.Multiline = true;
-            logBox.ScrollBars = ScrollBars.Vertical;
-            logBox.ReadOnly = true;
-            logBox.WordWrap = false;
-            logGroup.Controls.Add(logBox);
-
-            var statusPanel = new TableLayoutPanel();
-            statusPanel.Dock = DockStyle.Fill;
-            statusPanel.ColumnCount = 2;
-            statusPanel.RowCount = 1;
-            statusPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            statusPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 260));
-            root.Controls.Add(statusPanel, 0, 4);
-
-            statusLabel = new Label();
-            statusLabel.Dock = DockStyle.Fill;
-            statusLabel.Text = "就绪";
-            statusLabel.TextAlign = ContentAlignment.MiddleLeft;
-            statusPanel.Controls.Add(statusLabel, 0, 0);
-
-            progressBar = new ProgressBar();
-            progressBar.Dock = DockStyle.Fill;
-            statusPanel.Controls.Add(progressBar, 1, 0);
+            openRuleButton.Click += OpenRuleButton_Click;
 
             worker = new BackgroundWorker();
             worker.WorkerReportsProgress = true;
@@ -373,6 +281,404 @@ namespace OneClickRedactor
             worker.RunWorkerCompleted += Worker_RunWorkerCompleted;
 
             RuleFile.EnsureExists();
+            UpdateFileSummary();
+            UpdateLogSummary();
+        }
+
+        private Control BuildHeader()
+        {
+            var header = new TableLayoutPanel();
+            header.Dock = DockStyle.Fill;
+            header.Margin = new Padding(0);
+            header.Padding = new Padding(20, 0, 18, 0);
+            header.BackColor = Navy;
+            header.ColumnCount = 2;
+            header.RowCount = 1;
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 42));
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            header.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            var logo = new PictureBox();
+            logo.Dock = DockStyle.Fill;
+            logo.SizeMode = PictureBoxSizeMode.CenterImage;
+            logo.Image = ShellStockIcons.GetBitmap(77, false);
+            header.Controls.Add(logo, 0, 0);
+
+            var titlePanel = new TableLayoutPanel();
+            titlePanel.Dock = DockStyle.Fill;
+            titlePanel.Margin = new Padding(0);
+            titlePanel.RowCount = 2;
+            titlePanel.ColumnCount = 1;
+            titlePanel.RowStyles.Add(new RowStyle(SizeType.Percent, 58));
+            titlePanel.RowStyles.Add(new RowStyle(SizeType.Percent, 42));
+
+            var titleLabel = new Label();
+            titleLabel.Dock = DockStyle.Fill;
+            titleLabel.Text = "一键脱敏工具";
+            titleLabel.ForeColor = Color.White;
+            titleLabel.Font = new Font(Font.FontFamily, 15F, FontStyle.Bold);
+            titleLabel.TextAlign = ContentAlignment.BottomLeft;
+            titleLabel.Padding = new Padding(5, 0, 0, 0);
+            titlePanel.Controls.Add(titleLabel, 0, 0);
+
+            var subtitleLabel = new Label();
+            subtitleLabel.Dock = DockStyle.Fill;
+            subtitleLabel.Text = "DOC · DOCX · XLSX · PPTX · TXT · CSV";
+            subtitleLabel.ForeColor = Color.FromArgb(203, 220, 237);
+            subtitleLabel.Font = new Font(Font.FontFamily, 8.5F, FontStyle.Regular);
+            subtitleLabel.TextAlign = ContentAlignment.TopLeft;
+            subtitleLabel.Padding = new Padding(6, 1, 0, 0);
+            titlePanel.Controls.Add(subtitleLabel, 0, 1);
+            header.Controls.Add(titlePanel, 1, 0);
+
+            return header;
+        }
+
+        private Control BuildToolbar()
+        {
+            var toolbar = new TableLayoutPanel();
+            toolbar.Dock = DockStyle.Fill;
+            toolbar.Margin = new Padding(16, 10, 16, 4);
+            toolbar.Padding = new Padding(0);
+            toolbar.BackColor = Canvas;
+            toolbar.ColumnCount = 6;
+            toolbar.RowCount = 1;
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 134));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 146));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 124));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 164));
+            toolbar.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            addFilesButton = CreateCommandButton("添加文件", Mdl2Icons.GetBitmap("\uE710", Navy), false);
+            addFilesButton.Margin = new Padding(0, 4, 8, 4);
+            toolbar.Controls.Add(addFilesButton, 0, 0);
+
+            addFolderButton = CreateCommandButton("添加文件夹", Mdl2Icons.GetBitmap("\uE8B7", Navy), false);
+            addFolderButton.Margin = new Padding(0, 4, 8, 4);
+            toolbar.Controls.Add(addFolderButton, 1, 0);
+
+            clearButton = CreateCommandButton("清空列表", Mdl2Icons.GetBitmap("\uE74D", Color.FromArgb(72, 82, 93)), false);
+            clearButton.Margin = new Padding(0, 4, 8, 4);
+            toolbar.Controls.Add(clearButton, 2, 0);
+
+            openRuleButton = CreateCommandButton("编辑补充规则", Mdl2Icons.GetBitmap("\uE713", Navy), false);
+            openRuleButton.Margin = new Padding(0, 4, 8, 4);
+            toolbar.Controls.Add(openRuleButton, 4, 0);
+
+            startButton = CreateCommandButton("开始脱敏", Mdl2Icons.GetBitmap("\uE768", Color.White), true);
+            startButton.Margin = new Padding(8, 4, 0, 4);
+            toolbar.Controls.Add(startButton, 5, 0);
+            return toolbar;
+        }
+
+        private Control BuildFileSection()
+        {
+            var section = CreateSectionShell("待处理文件（可拖拽文件或文件夹到列表）", out fileCountLabel);
+            var gridHost = new Panel();
+            gridHost.Dock = DockStyle.Fill;
+            gridHost.BackColor = Color.White;
+
+            fileGrid = CreateDataGrid();
+            fileGrid.CellFormatting += FileGrid_CellFormatting;
+            fileGrid.Columns.Add(CreateImageColumn("FileIcon", 38));
+            fileGrid.Columns.Add(CreateTextColumn("FileName", "文件名称", 190, DataGridViewAutoSizeColumnMode.None));
+            fileGrid.Columns.Add(CreateTextColumn("FileType", "类型", 82, DataGridViewAutoSizeColumnMode.None));
+            fileGrid.Columns.Add(CreateTextColumn("FileSize", "大小", 82, DataGridViewAutoSizeColumnMode.None));
+            fileGrid.Columns.Add(CreateTextColumn("Directory", "所在路径", 260, DataGridViewAutoSizeColumnMode.Fill));
+            fileGrid.Columns.Add(CreateTextColumn("Status", "状态", 110, DataGridViewAutoSizeColumnMode.None));
+            fileGrid.Columns.Add(CreateTextColumn("Hits", "命中", 72, DataGridViewAutoSizeColumnMode.None));
+            gridHost.Controls.Add(fileGrid);
+
+            emptyStatePanel = new Panel();
+            emptyStatePanel.Size = new Size(230, 82);
+            emptyStatePanel.BackColor = Color.White;
+            var emptyIcon = new PictureBox();
+            emptyIcon.Size = new Size(42, 42);
+            emptyIcon.SizeMode = PictureBoxSizeMode.CenterImage;
+            emptyIcon.Image = ShellStockIcons.GetBitmap(0, false);
+            emptyIcon.Anchor = AnchorStyles.None;
+            emptyIcon.Location = new Point(0, 0);
+            emptyStatePanel.Controls.Add(emptyIcon);
+            var emptyLabel = new Label();
+            emptyLabel.AutoSize = true;
+            emptyLabel.Text = "暂无待处理文件";
+            emptyLabel.ForeColor = MutedText;
+            emptyLabel.Font = new Font(Font.FontFamily, 10F, FontStyle.Regular);
+            emptyLabel.Anchor = AnchorStyles.None;
+            emptyStatePanel.Controls.Add(emptyLabel);
+            gridHost.Resize += delegate
+            {
+                var totalWidth = Math.Max(emptyIcon.Width, emptyLabel.Width);
+                var centerX = (emptyStatePanel.ClientSize.Width - totalWidth) / 2;
+                var centerY = (emptyStatePanel.ClientSize.Height - 72) / 2;
+                emptyIcon.Location = new Point(centerX + (totalWidth - emptyIcon.Width) / 2, centerY);
+                emptyLabel.Location = new Point(centerX + (totalWidth - emptyLabel.Width) / 2, centerY + 48);
+                emptyStatePanel.Location = new Point(
+                    Math.Max(0, (gridHost.ClientSize.Width - emptyStatePanel.Width) / 2),
+                    Math.Max(fileGrid.ColumnHeadersHeight, fileGrid.ColumnHeadersHeight +
+                        (gridHost.ClientSize.Height - fileGrid.ColumnHeadersHeight - emptyStatePanel.Height) / 2));
+            };
+            gridHost.Controls.Add(emptyStatePanel);
+            emptyStatePanel.BringToFront();
+            ((TableLayoutPanel)section.Controls[0]).Controls.Add(gridHost, 0, 1);
+            return section;
+        }
+
+        private Control BuildOptionsStrip()
+        {
+            var options = new TableLayoutPanel();
+            options.Dock = DockStyle.Fill;
+            options.Margin = new Padding(16, 4, 16, 4);
+            options.Padding = new Padding(14, 0, 12, 0);
+            options.BackColor = Color.White;
+            options.CellBorderStyle = TableLayoutPanelCellBorderStyle.None;
+            options.ColumnCount = 4;
+            options.RowCount = 1;
+            options.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 102));
+            options.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
+            options.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
+            options.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            options.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            options.Paint += delegate(object sender, PaintEventArgs e)
+            {
+                ControlPaint.DrawBorder(e.Graphics, options.ClientRectangle, Border, ButtonBorderStyle.Solid);
+            };
+
+            var optionTitle = new Label();
+            optionTitle.Dock = DockStyle.Fill;
+            optionTitle.Text = "处理选项";
+            optionTitle.Font = new Font(Font, FontStyle.Bold);
+            optionTitle.ForeColor = Navy;
+            optionTitle.TextAlign = ContentAlignment.MiddleLeft;
+            options.Controls.Add(optionTitle, 0, 0);
+
+            includeSubfoldersCheckBox = CreateOptionCheckBox("文件夹含子目录");
+            includeSubfoldersCheckBox.Checked = true;
+            options.Controls.Add(includeSubfoldersCheckBox, 1, 0);
+
+            addressGuessCheckBox = CreateOptionCheckBox("加强地址模糊识别");
+            addressGuessCheckBox.Checked = true;
+            options.Controls.Add(addressGuessCheckBox, 2, 0);
+
+            var safetyLabel = new Label();
+            safetyLabel.Dock = DockStyle.Fill;
+            safetyLabel.Text = "原文件保持不变";
+            safetyLabel.ForeColor = Success;
+            safetyLabel.TextAlign = ContentAlignment.MiddleRight;
+            safetyLabel.Padding = new Padding(0, 0, 4, 0);
+            options.Controls.Add(safetyLabel, 3, 0);
+            return options;
+        }
+
+        private Control BuildLogSection()
+        {
+            var section = CreateSectionShell("处理日志", out logCountLabel);
+            logGrid = CreateDataGrid();
+            logGrid.CellFormatting += LogGrid_CellFormatting;
+            logGrid.Columns.Add(CreateTextColumn("Time", "时间", 92, DataGridViewAutoSizeColumnMode.None));
+            logGrid.Columns.Add(CreateTextColumn("Level", "级别", 82, DataGridViewAutoSizeColumnMode.None));
+            logGrid.Columns.Add(CreateTextColumn("Message", "消息", 320, DataGridViewAutoSizeColumnMode.Fill));
+            ((TableLayoutPanel)section.Controls[0]).Controls.Add(logGrid, 0, 1);
+            return section;
+        }
+
+        private Control BuildStatusBar()
+        {
+            var statusBar = new TableLayoutPanel();
+            statusBar.Dock = DockStyle.Fill;
+            statusBar.Margin = new Padding(0);
+            statusBar.Padding = new Padding(18, 0, 18, 0);
+            statusBar.BackColor = Color.White;
+            statusBar.ColumnCount = 4;
+            statusBar.RowCount = 1;
+            statusBar.CellBorderStyle = TableLayoutPanelCellBorderStyle.None;
+            statusBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            statusBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
+            statusBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 270));
+            statusBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 52));
+            statusBar.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            statusBar.Paint += delegate(object sender, PaintEventArgs e)
+            {
+                using (var pen = new Pen(Border))
+                {
+                    e.Graphics.DrawLine(pen, 0, 0, statusBar.ClientSize.Width, 0);
+                }
+            };
+
+            statusLabel = new Label();
+            statusLabel.Dock = DockStyle.Fill;
+            statusLabel.Text = "就绪";
+            statusLabel.ForeColor = MutedText;
+            statusLabel.AutoEllipsis = true;
+            statusLabel.TextAlign = ContentAlignment.MiddleLeft;
+            statusBar.Controls.Add(statusLabel, 0, 0);
+
+            batchSummaryLabel = new Label();
+            batchSummaryLabel.Dock = DockStyle.Fill;
+            batchSummaryLabel.ForeColor = MutedText;
+            batchSummaryLabel.TextAlign = ContentAlignment.MiddleRight;
+            statusBar.Controls.Add(batchSummaryLabel, 1, 0);
+
+            progressBar = new ProgressBar();
+            progressBar.Dock = DockStyle.Fill;
+            progressBar.Margin = new Padding(14, 13, 8, 13);
+            progressBar.Style = ProgressBarStyle.Continuous;
+            statusBar.Controls.Add(progressBar, 2, 0);
+
+            var progressText = new Label();
+            progressText.Name = "ProgressText";
+            progressText.Dock = DockStyle.Fill;
+            progressText.Text = "0%";
+            progressText.ForeColor = MutedText;
+            progressText.TextAlign = ContentAlignment.MiddleRight;
+            statusBar.Controls.Add(progressText, 3, 0);
+            return statusBar;
+        }
+
+        private Panel CreateSectionShell(string title, out Label countLabel)
+        {
+            var shell = new Panel();
+            shell.Dock = DockStyle.Fill;
+            shell.Margin = new Padding(16, 4, 16, 4);
+            shell.BackColor = Color.White;
+            shell.BorderStyle = BorderStyle.FixedSingle;
+
+            var layout = new TableLayoutPanel();
+            layout.Dock = DockStyle.Fill;
+            layout.Margin = new Padding(0);
+            layout.ColumnCount = 1;
+            layout.RowCount = 2;
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            shell.Controls.Add(layout);
+
+            var header = new TableLayoutPanel();
+            header.Dock = DockStyle.Fill;
+            header.Margin = new Padding(0);
+            header.Padding = new Padding(12, 0, 12, 0);
+            header.BackColor = Color.White;
+            header.ColumnCount = 2;
+            header.RowCount = 1;
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
+            header.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            var titleLabel = new Label();
+            titleLabel.Dock = DockStyle.Fill;
+            titleLabel.Text = title;
+            titleLabel.Font = new Font(Font, FontStyle.Bold);
+            titleLabel.ForeColor = Navy;
+            titleLabel.TextAlign = ContentAlignment.MiddleLeft;
+            header.Controls.Add(titleLabel, 0, 0);
+
+            countLabel = new Label();
+            countLabel.Dock = DockStyle.Fill;
+            countLabel.ForeColor = MutedText;
+            countLabel.TextAlign = ContentAlignment.MiddleRight;
+            header.Controls.Add(countLabel, 1, 0);
+            layout.Controls.Add(header, 0, 0);
+            return shell;
+        }
+
+        private DoubleBufferedDataGridView CreateDataGrid()
+        {
+            var grid = new DoubleBufferedDataGridView();
+            grid.Dock = DockStyle.Fill;
+            grid.Margin = new Padding(0);
+            grid.BackgroundColor = Color.White;
+            grid.BorderStyle = BorderStyle.None;
+            grid.AllowUserToAddRows = false;
+            grid.AllowUserToDeleteRows = false;
+            grid.AllowUserToResizeRows = false;
+            grid.ReadOnly = true;
+            grid.MultiSelect = false;
+            grid.RowHeadersVisible = false;
+            grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            grid.AutoGenerateColumns = false;
+            grid.EnableHeadersVisualStyles = false;
+            grid.CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal;
+            grid.ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.Single;
+            grid.GridColor = Border;
+            grid.RowTemplate.Height = 38;
+            grid.ColumnHeadersHeight = 36;
+            grid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+            grid.DefaultCellStyle.BackColor = Color.White;
+            grid.DefaultCellStyle.ForeColor = Color.FromArgb(39, 49, 60);
+            grid.DefaultCellStyle.SelectionBackColor = Color.FromArgb(225, 238, 251);
+            grid.DefaultCellStyle.SelectionForeColor = Color.FromArgb(20, 55, 88);
+            grid.DefaultCellStyle.Padding = new Padding(6, 0, 6, 0);
+            grid.DefaultCellStyle.Font = Font;
+            grid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(247, 249, 251);
+            grid.ColumnHeadersDefaultCellStyle.ForeColor = Color.FromArgb(57, 68, 80);
+            grid.ColumnHeadersDefaultCellStyle.Font = new Font(Font, FontStyle.Bold);
+            grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(6, 0, 6, 0);
+            return grid;
+        }
+
+        private static DataGridViewTextBoxColumn CreateTextColumn(string name, string header, int width, DataGridViewAutoSizeColumnMode mode)
+        {
+            var column = new DataGridViewTextBoxColumn();
+            column.Name = name;
+            column.HeaderText = header;
+            column.Width = width;
+            column.AutoSizeMode = mode;
+            column.SortMode = DataGridViewColumnSortMode.NotSortable;
+            return column;
+        }
+
+        private static DataGridViewImageColumn CreateImageColumn(string name, int width)
+        {
+            var column = new DataGridViewImageColumn();
+            column.Name = name;
+            column.HeaderText = "";
+            column.Width = width;
+            column.ImageLayout = DataGridViewImageCellLayout.Normal;
+            column.SortMode = DataGridViewColumnSortMode.NotSortable;
+            return column;
+        }
+
+        private Button CreateCommandButton(string text, Image image, bool primary)
+        {
+            var button = new Button();
+            button.Dock = DockStyle.Fill;
+            button.Text = text;
+            button.Image = image;
+            button.ImageAlign = ContentAlignment.MiddleLeft;
+            button.TextImageRelation = TextImageRelation.ImageBeforeText;
+            button.Padding = new Padding(12, 0, 10, 0);
+            button.Font = new Font(Font, primary ? FontStyle.Bold : FontStyle.Regular);
+            button.FlatStyle = FlatStyle.Flat;
+            button.UseVisualStyleBackColor = false;
+            button.Cursor = Cursors.Hand;
+            button.BackColor = primary ? PrimaryBlue : Color.White;
+            button.ForeColor = primary ? Color.White : Color.FromArgb(36, 51, 66);
+            button.FlatAppearance.BorderColor = primary ? PrimaryBlue : Border;
+            button.FlatAppearance.BorderSize = 1;
+            button.MouseEnter += delegate
+            {
+                if (button.Enabled)
+                {
+                    button.BackColor = primary ? PrimaryBlueHover : Color.FromArgb(247, 250, 253);
+                }
+            };
+            button.MouseLeave += delegate
+            {
+                button.BackColor = primary ? PrimaryBlue : Color.White;
+            };
+            return button;
+        }
+
+        private CheckBox CreateOptionCheckBox(string text)
+        {
+            var checkBox = new CheckBox();
+            checkBox.Dock = DockStyle.Fill;
+            checkBox.Text = text;
+            checkBox.ForeColor = Color.FromArgb(47, 59, 72);
+            checkBox.TextAlign = ContentAlignment.MiddleLeft;
+            checkBox.Padding = new Padding(8, 0, 0, 0);
+            return checkBox;
         }
 
         private void AddFilesButton_Click(object sender, EventArgs e)
@@ -404,7 +710,8 @@ namespace OneClickRedactor
         private void ClearButton_Click(object sender, EventArgs e)
         {
             files.Clear();
-            fileList.Items.Clear();
+            fileGrid.Rows.Clear();
+            UpdateFileSummary();
             statusLabel.Text = "已清空";
         }
 
@@ -436,7 +743,10 @@ namespace OneClickRedactor
 
             SetBusy(true);
             progressBar.Value = 0;
-            logBox.Clear();
+            UpdateProgressText(0);
+            logGrid.Rows.Clear();
+            UpdateLogSummary();
+            ResetFileStatuses();
             AppendLog("开始处理，共 " + files.Count + " 个文件。");
             AppendLog("补充规则文件：" + RuleFile.Path);
 
@@ -501,11 +811,12 @@ namespace OneClickRedactor
                 if (!files.Contains(file, StringComparer.OrdinalIgnoreCase))
                 {
                     files.Add(file);
-                    fileList.Items.Add(file);
+                    AddFileGridRow(file);
                     added++;
                 }
             }
 
+            UpdateFileSummary();
             statusLabel.Text = "已添加 " + added + " 个文件，当前共 " + files.Count + " 个。";
         }
 
@@ -521,7 +832,7 @@ namespace OneClickRedactor
             {
                 var file = options.Files[i];
                 var percent = options.Files.Length == 0 ? 0 : (int)Math.Round((i * 100.0) / options.Files.Length);
-                workerRef.ReportProgress(percent, "正在处理：" + file);
+                workerRef.ReportProgress(percent, new ProcessingProgress(file, "处理中", "正在处理：" + file, false, -1));
 
                 FileProcessingResult result;
                 try
@@ -536,10 +847,18 @@ namespace OneClickRedactor
                 }
 
                 allResults.Add(result);
-                workerRef.ReportProgress(percent, result.ToLogLine());
+                var completedPercent = options.Files.Length == 0 ? 100 : (int)Math.Round(((i + 1) * 100.0) / options.Files.Length);
+                workerRef.ReportProgress(
+                    completedPercent,
+                    new ProcessingProgress(
+                        file,
+                        result.Success ? "已完成" : "失败",
+                        result.ToLogLine(),
+                        true,
+                        result.Success ? result.TotalReplacements : -1));
             }
 
-            workerRef.ReportProgress(100, "处理完成。");
+            workerRef.ReportProgress(100, new ProcessingProgress(null, null, "处理完成。", true, -1));
             e.Result = allResults;
         }
 
@@ -548,18 +867,24 @@ namespace OneClickRedactor
             if (e.ProgressPercentage >= 0 && e.ProgressPercentage <= 100)
             {
                 progressBar.Value = e.ProgressPercentage;
+                UpdateProgressText(e.ProgressPercentage);
             }
 
-            var message = e.UserState as string;
-            if (!string.IsNullOrEmpty(message))
+            var update = e.UserState as ProcessingProgress;
+            if (update != null)
             {
-                if (message.StartsWith("正在处理：", StringComparison.Ordinal))
+                if (!string.IsNullOrEmpty(update.FilePath) && !string.IsNullOrEmpty(update.Status))
                 {
-                    statusLabel.Text = message;
+                    UpdateFileRowStatus(update.FilePath, update.Status, update.Replacements);
                 }
-                else
+
+                if (!string.IsNullOrEmpty(update.Message))
                 {
-                    AppendLog(message);
+                    statusLabel.Text = update.Message;
+                    if (update.WriteLog)
+                    {
+                        AppendLog(update.Message);
+                    }
                 }
             }
         }
@@ -598,6 +923,7 @@ namespace OneClickRedactor
             addFolderButton.Enabled = !busy;
             clearButton.Enabled = !busy;
             startButton.Enabled = !busy;
+            startButton.Text = busy ? "正在脱敏" : "开始脱敏";
             openRuleButton.Enabled = !busy;
             includeSubfoldersCheckBox.Enabled = !busy;
             addressGuessCheckBox.Enabled = !busy;
@@ -605,11 +931,159 @@ namespace OneClickRedactor
 
         private void AppendLog(string message)
         {
-            if (logBox.TextLength > 0)
+            var level = "信息";
+            if (message.IndexOf("失败", StringComparison.Ordinal) >= 0 || message.IndexOf("错误", StringComparison.Ordinal) >= 0)
             {
-                logBox.AppendText(Environment.NewLine);
+                level = "失败";
             }
-            logBox.AppendText(DateTime.Now.ToString("HH:mm:ss") + "  " + message);
+            else if (message.StartsWith("完成", StringComparison.Ordinal)
+                || message.StartsWith("汇总", StringComparison.Ordinal)
+                || message.IndexOf("成功", StringComparison.Ordinal) >= 0)
+            {
+                level = "成功";
+            }
+
+            logGrid.Rows.Add(DateTime.Now.ToString("HH:mm:ss"), level, message);
+            if (logGrid.Rows.Count > 0)
+            {
+                logGrid.FirstDisplayedScrollingRowIndex = logGrid.Rows.Count - 1;
+            }
+            UpdateLogSummary();
+        }
+
+        private void AddFileGridRow(string filePath)
+        {
+            var info = new FileInfo(filePath);
+            var extension = info.Extension.TrimStart('.').ToUpperInvariant();
+            var rowIndex = fileGrid.Rows.Add(
+                ShellStockIcons.GetBitmap(0, true),
+                info.Name,
+                string.IsNullOrEmpty(extension) ? "文件" : extension,
+                FormatFileSize(info.Length),
+                info.DirectoryName ?? "",
+                "等待中",
+                "--");
+            fileGrid.Rows[rowIndex].Tag = filePath;
+        }
+
+        private void UpdateFileRowStatus(string filePath, string status, int replacements)
+        {
+            foreach (DataGridViewRow row in fileGrid.Rows)
+            {
+                var rowPath = row.Tag as string;
+                if (string.Equals(rowPath, filePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    row.Cells["Status"].Value = status;
+                    if (replacements >= 0)
+                    {
+                        row.Cells["Hits"].Value = replacements.ToString();
+                    }
+                    row.Selected = true;
+                    fileGrid.FirstDisplayedScrollingRowIndex = Math.Max(0, row.Index);
+                    break;
+                }
+            }
+        }
+
+        private void ResetFileStatuses()
+        {
+            foreach (DataGridViewRow row in fileGrid.Rows)
+            {
+                row.Cells["Status"].Value = "等待中";
+                row.Cells["Hits"].Value = "--";
+            }
+        }
+
+        private void UpdateFileSummary()
+        {
+            fileCountLabel.Text = "共 " + files.Count + " 个文件";
+            batchSummaryLabel.Text = "总计 " + files.Count + " 个文件";
+            emptyStatePanel.Visible = files.Count == 0;
+            if (emptyStatePanel.Visible)
+            {
+                emptyStatePanel.BringToFront();
+            }
+        }
+
+        private void UpdateLogSummary()
+        {
+            logCountLabel.Text = logGrid.Rows.Count + " 条记录";
+        }
+
+        private void UpdateProgressText(int percent)
+        {
+            var label = FindControlRecursive(this, "ProgressText") as Label;
+            if (label != null)
+            {
+                label.Text = percent + "%";
+            }
+        }
+
+        private static Control FindControlRecursive(Control parent, string name)
+        {
+            foreach (Control child in parent.Controls)
+            {
+                if (string.Equals(child.Name, name, StringComparison.Ordinal))
+                {
+                    return child;
+                }
+                var nested = FindControlRecursive(child, name);
+                if (nested != null)
+                {
+                    return nested;
+                }
+            }
+            return null;
+        }
+
+        private static string FormatFileSize(long bytes)
+        {
+            if (bytes < 1024)
+            {
+                return bytes + " B";
+            }
+            if (bytes < 1024 * 1024)
+            {
+                return (bytes / 1024.0).ToString("0.0") + " KB";
+            }
+            return (bytes / (1024.0 * 1024.0)).ToString("0.0") + " MB";
+        }
+
+        private void FileGrid_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
+        {
+            if (fileGrid.Columns[e.ColumnIndex].Name != "Status" || e.Value == null)
+            {
+                return;
+            }
+
+            var status = e.Value.ToString();
+            if (status == "已完成")
+            {
+                e.CellStyle.ForeColor = Success;
+            }
+            else if (status == "失败")
+            {
+                e.CellStyle.ForeColor = Danger;
+            }
+            else if (status == "处理中")
+            {
+                e.CellStyle.ForeColor = PrimaryBlue;
+            }
+            else
+            {
+                e.CellStyle.ForeColor = MutedText;
+            }
+        }
+
+        private void LogGrid_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
+        {
+            if (logGrid.Columns[e.ColumnIndex].Name != "Level" || e.Value == null)
+            {
+                return;
+            }
+
+            var level = e.Value.ToString();
+            e.CellStyle.ForeColor = level == "成功" ? Success : level == "失败" ? Danger : PrimaryBlue;
         }
 
         private void TryWriteBatchReport(IList<FileProcessingResult> results)
@@ -634,6 +1108,104 @@ namespace OneClickRedactor
             {
                 AppendLog("生成总报告失败：" + ex.Message);
             }
+        }
+    }
+
+    internal sealed class ProcessingProgress
+    {
+        public ProcessingProgress(string filePath, string status, string message, bool writeLog, int replacements)
+        {
+            FilePath = filePath;
+            Status = status;
+            Message = message;
+            WriteLog = writeLog;
+            Replacements = replacements;
+        }
+
+        public string FilePath { get; private set; }
+        public string Status { get; private set; }
+        public string Message { get; private set; }
+        public bool WriteLog { get; private set; }
+        public int Replacements { get; private set; }
+    }
+
+    internal sealed class DoubleBufferedDataGridView : DataGridView
+    {
+        public DoubleBufferedDataGridView()
+        {
+            DoubleBuffered = true;
+        }
+    }
+
+    internal static class ShellStockIcons
+    {
+        private const uint ShgsiIcon = 0x000000100;
+        private const uint ShgsiSmallIcon = 0x000000001;
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct StockIconInfo
+        {
+            public uint cbSize;
+            public IntPtr hIcon;
+            public int iSysImageIndex;
+            public int iIcon;
+
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string szPath;
+        }
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        private static extern int SHGetStockIconInfo(uint stockIconId, uint flags, ref StockIconInfo info);
+
+        [DllImport("user32.dll")]
+        private static extern bool DestroyIcon(IntPtr iconHandle);
+
+        public static Icon GetIcon(uint stockIconId, bool small)
+        {
+            var info = new StockIconInfo();
+            info.cbSize = (uint)Marshal.SizeOf(typeof(StockIconInfo));
+            var flags = ShgsiIcon | (small ? ShgsiSmallIcon : 0);
+            if (SHGetStockIconInfo(stockIconId, flags, ref info) == 0 && info.hIcon != IntPtr.Zero)
+            {
+                try
+                {
+                    return (Icon)Icon.FromHandle(info.hIcon).Clone();
+                }
+                finally
+                {
+                    DestroyIcon(info.hIcon);
+                }
+            }
+            return (Icon)SystemIcons.Application.Clone();
+        }
+
+        public static Bitmap GetBitmap(uint stockIconId, bool small)
+        {
+            using (var icon = GetIcon(stockIconId, small))
+            {
+                return icon.ToBitmap();
+            }
+        }
+    }
+
+    internal static class Mdl2Icons
+    {
+        public static Bitmap GetBitmap(string glyph, Color color)
+        {
+            const int size = 22;
+            var bitmap = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            using (var graphics = Graphics.FromImage(bitmap))
+            using (var font = new Font("Segoe MDL2 Assets", 15F, FontStyle.Regular, GraphicsUnit.Pixel))
+            using (var brush = new SolidBrush(color))
+            using (var format = new StringFormat())
+            {
+                graphics.Clear(Color.Transparent);
+                graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+                format.Alignment = StringAlignment.Center;
+                format.LineAlignment = StringAlignment.Center;
+                graphics.DrawString(glyph, font, brush, new RectangleF(0, 0, size, size), format);
+            }
+            return bitmap;
         }
     }
 

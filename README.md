@@ -2,6 +2,8 @@
 
 这是一个 Windows 桌面 exe 工具，用于批量脱敏 `doc/docx/docm`、`xlsx/xlsm`、`pptx/pptm`、`txt/csv` 文件。原始文件不会被修改，工具会在原目录生成带 `_已脱敏` 后缀的新文件，并生成脱敏报告。
 
+![一键脱敏工具界面](design/interface.png)
+
 ## 默认识别内容
 
 - 身份证号、手机号、座机号、邮箱
