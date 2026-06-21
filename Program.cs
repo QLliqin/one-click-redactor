@@ -14,6 +14,13 @@ using System.Xml;
 using System.Xml.Linq;
 using NPOI.HWPF;
 
+[assembly: AssemblyTitle("一键脱敏工具 专业版")]
+[assembly: AssemblyDescription("离线批量识别并脱敏办案文书中的个人与企业敏感信息")]
+[assembly: AssemblyCompany("QLliqin")]
+[assembly: AssemblyProduct("一键脱敏工具")]
+[assembly: AssemblyVersion("1.1.1.0")]
+[assembly: AssemblyFileVersion("1.1.1.0")]
+
 namespace OneClickRedactor
 {
     internal static class EmbeddedAssemblyLoader
@@ -89,12 +96,22 @@ namespace OneClickRedactor
             RuleFile.EnsureExists();
 
             var enableAddressGuess = true;
+            var includeGeneratedArtifacts = false;
+            string outputDirectory = null;
             var inputPaths = new List<string>();
             foreach (var arg in args)
             {
                 if (string.Equals(arg, "--no-address-guess", StringComparison.OrdinalIgnoreCase))
                 {
                     enableAddressGuess = false;
+                }
+                else if (string.Equals(arg, "--include-redacted", StringComparison.OrdinalIgnoreCase))
+                {
+                    includeGeneratedArtifacts = true;
+                }
+                else if (arg.StartsWith("--output=", StringComparison.OrdinalIgnoreCase))
+                {
+                    outputDirectory = arg.Substring("--output=".Length).Trim().Trim('"');
                 }
                 else if (string.Equals(arg, "--help", StringComparison.OrdinalIgnoreCase) || string.Equals(arg, "/?", StringComparison.OrdinalIgnoreCase))
                 {
@@ -107,7 +124,7 @@ namespace OneClickRedactor
                 }
             }
 
-            var files = DiscoverFiles(inputPaths);
+            var files = DiscoverFiles(inputPaths, !includeGeneratedArtifacts);
             var anonymizer = new Anonymizer(RuleFile.LoadRules(), enableAddressGuess);
             var results = new List<FileProcessingResult>();
 
@@ -115,7 +132,7 @@ namespace OneClickRedactor
             {
                 try
                 {
-                    results.Add(FileProcessor.Process(file, anonymizer));
+                    results.Add(FileProcessor.Process(file, anonymizer, outputDirectory));
                 }
                 catch (Exception ex)
                 {
@@ -126,17 +143,19 @@ namespace OneClickRedactor
                 }
             }
 
-            WriteCommandLineReport(results);
+            WriteCommandLineReport(results, outputDirectory);
         }
 
-        private static List<string> DiscoverFiles(IEnumerable<string> paths)
+        private static List<string> DiscoverFiles(IEnumerable<string> paths, bool skipGeneratedArtifacts)
         {
             var files = new List<string>();
             foreach (var path in paths)
             {
                 if (File.Exists(path))
                 {
-                    if (FileProcessor.IsSupported(path) && !files.Contains(path, StringComparer.OrdinalIgnoreCase))
+                    if (FileProcessor.IsSupported(path)
+                        && (!skipGeneratedArtifacts || !FileProcessor.IsGeneratedArtifact(path))
+                        && !files.Contains(path, StringComparer.OrdinalIgnoreCase))
                     {
                         files.Add(path);
                     }
@@ -145,7 +164,9 @@ namespace OneClickRedactor
                 {
                     foreach (var file in Directory.EnumerateFiles(path, "*.*", SearchOption.AllDirectories))
                     {
-                        if (FileProcessor.IsSupported(file) && !files.Contains(file, StringComparer.OrdinalIgnoreCase))
+                        if (FileProcessor.IsSupported(file)
+                            && (!skipGeneratedArtifacts || !FileProcessor.IsGeneratedArtifact(file))
+                            && !files.Contains(file, StringComparer.OrdinalIgnoreCase))
                         {
                             files.Add(file);
                         }
@@ -156,11 +177,15 @@ namespace OneClickRedactor
             return files;
         }
 
-        private static void WriteCommandLineReport(IList<FileProcessingResult> results)
+        private static void WriteCommandLineReport(IList<FileProcessingResult> results, string outputDirectory)
         {
             try
             {
-                var reportPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "命令行脱敏报告.txt");
+                var reportDirectory = string.IsNullOrWhiteSpace(outputDirectory)
+                    ? AppDomain.CurrentDomain.BaseDirectory
+                    : System.IO.Path.GetFullPath(outputDirectory);
+                Directory.CreateDirectory(reportDirectory);
+                var reportPath = System.IO.Path.Combine(reportDirectory, "命令行脱敏报告.txt");
                 var lines = new List<string>();
                 lines.Add("一键脱敏工具命令行处理报告");
                 lines.Add("生成时间：" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
@@ -189,8 +214,10 @@ namespace OneClickRedactor
                     "",
                     "一键脱敏工具.exe 文件或文件夹路径 [更多路径]",
                     "一键脱敏工具.exe --no-address-guess 文件或文件夹路径",
+                    "一键脱敏工具.exe --output=\"D:\\脱敏输出\" 文件或文件夹路径",
+                    "一键脱敏工具.exe --include-redacted 文件或文件夹路径",
                     "",
-                    "说明：原文件不会被修改，会生成带 _已脱敏 后缀的新文件。"
+                    "说明：原文件不会被修改，会生成带 _已脱敏 后缀的新文件。默认跳过已脱敏文件和报告。"
                 };
                 File.WriteAllLines(helpPath, lines, new UTF8Encoding(true));
             }
@@ -216,11 +243,20 @@ namespace OneClickRedactor
         private Panel emptyStatePanel;
         private Button addFilesButton;
         private Button addFolderButton;
+        private Button removeSelectedButton;
         private Button clearButton;
         private Button startButton;
         private Button openRuleButton;
+        private Button openOutputButton;
+        private Button browseOutputButton;
+        private Button clearLogButton;
         private CheckBox includeSubfoldersCheckBox;
         private CheckBox addressGuessCheckBox;
+        private CheckBox skipRedactedCheckBox;
+        private CheckBox saveBatchReportCheckBox;
+        private CheckBox openAfterCompletionCheckBox;
+        private ComboBox outputModeComboBox;
+        private TextBox outputDirectoryTextBox;
         private ProgressBar progressBar;
         private Label statusLabel;
         private Label fileCountLabel;
@@ -228,6 +264,8 @@ namespace OneClickRedactor
         private Label batchSummaryLabel;
         private BackgroundWorker worker;
         private readonly List<string> files;
+        private readonly Dictionary<string, string> outputPaths;
+        private string lastOutputDirectory;
 
         public MainForm()
         {
@@ -240,12 +278,13 @@ namespace OneClickRedactor
             AutoScaleMode = AutoScaleMode.Dpi;
             KeyPreview = true;
             DoubleBuffered = true;
-            Icon = ShellStockIcons.GetIcon(77, false);
+            Icon = ApplicationIcon.Load();
             AllowDrop = true;
             DragEnter += MainForm_DragEnter;
             DragDrop += MainForm_DragDrop;
 
             files = new List<string>();
+            outputPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
             var root = new TableLayoutPanel();
             root.Dock = DockStyle.Fill;
@@ -256,7 +295,7 @@ namespace OneClickRedactor
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 52));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 104));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 48));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
             Controls.Add(root);
@@ -270,9 +309,14 @@ namespace OneClickRedactor
 
             addFilesButton.Click += AddFilesButton_Click;
             addFolderButton.Click += AddFolderButton_Click;
+            removeSelectedButton.Click += RemoveSelectedButton_Click;
             clearButton.Click += ClearButton_Click;
             startButton.Click += StartButton_Click;
             openRuleButton.Click += OpenRuleButton_Click;
+            openOutputButton.Click += OpenOutputButton_Click;
+            browseOutputButton.Click += BrowseOutputButton_Click;
+            clearLogButton.Click += ClearLogButton_Click;
+            outputModeComboBox.SelectedIndexChanged += OutputModeComboBox_SelectedIndexChanged;
 
             worker = new BackgroundWorker();
             worker.WorkerReportsProgress = true;
@@ -283,6 +327,7 @@ namespace OneClickRedactor
             RuleFile.EnsureExists();
             UpdateFileSummary();
             UpdateLogSummary();
+            UpdateOutputControls();
         }
 
         private Control BuildHeader()
@@ -292,16 +337,17 @@ namespace OneClickRedactor
             header.Margin = new Padding(0);
             header.Padding = new Padding(20, 0, 18, 0);
             header.BackColor = Navy;
-            header.ColumnCount = 2;
+            header.ColumnCount = 3;
             header.RowCount = 1;
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 42));
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
             header.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
             var logo = new PictureBox();
             logo.Dock = DockStyle.Fill;
             logo.SizeMode = PictureBoxSizeMode.CenterImage;
-            logo.Image = ShellStockIcons.GetBitmap(77, false);
+            logo.Image = Icon == null ? ShellStockIcons.GetBitmap(77, false) : Icon.ToBitmap();
             header.Controls.Add(logo, 0, 0);
 
             var titlePanel = new TableLayoutPanel();
@@ -323,13 +369,21 @@ namespace OneClickRedactor
 
             var subtitleLabel = new Label();
             subtitleLabel.Dock = DockStyle.Fill;
-            subtitleLabel.Text = "DOC · DOCX · XLSX · PPTX · TXT · CSV";
+            subtitleLabel.Text = "专业版 · DOC · DOCX · XLSX · PPTX · TXT · CSV";
             subtitleLabel.ForeColor = Color.FromArgb(203, 220, 237);
             subtitleLabel.Font = new Font(Font.FontFamily, 8.5F, FontStyle.Regular);
             subtitleLabel.TextAlign = ContentAlignment.TopLeft;
             subtitleLabel.Padding = new Padding(6, 1, 0, 0);
             titlePanel.Controls.Add(subtitleLabel, 0, 1);
             header.Controls.Add(titlePanel, 1, 0);
+
+            var versionLabel = new Label();
+            versionLabel.Dock = DockStyle.Fill;
+            versionLabel.Text = "专业版  v1.1";
+            versionLabel.ForeColor = Color.FromArgb(203, 220, 237);
+            versionLabel.TextAlign = ContentAlignment.MiddleRight;
+            versionLabel.Font = new Font(Font.FontFamily, 9F, FontStyle.Regular);
+            header.Controls.Add(versionLabel, 2, 0);
 
             return header;
         }
@@ -341,14 +395,16 @@ namespace OneClickRedactor
             toolbar.Margin = new Padding(16, 10, 16, 4);
             toolbar.Padding = new Padding(0);
             toolbar.BackColor = Canvas;
-            toolbar.ColumnCount = 6;
+            toolbar.ColumnCount = 8;
             toolbar.RowCount = 1;
-            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 134));
-            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 146));
-            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 124));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 122));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 136));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 118));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 98));
             toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
-            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 164));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 124));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 146));
+            toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 138));
             toolbar.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
             addFilesButton = CreateCommandButton("添加文件", Mdl2Icons.GetBitmap("\uE710", Navy), false);
@@ -359,17 +415,27 @@ namespace OneClickRedactor
             addFolderButton.Margin = new Padding(0, 4, 8, 4);
             toolbar.Controls.Add(addFolderButton, 1, 0);
 
-            clearButton = CreateCommandButton("清空列表", Mdl2Icons.GetBitmap("\uE74D", Color.FromArgb(72, 82, 93)), false);
-            clearButton.Margin = new Padding(0, 4, 8, 4);
-            toolbar.Controls.Add(clearButton, 2, 0);
+            removeSelectedButton = CreateCommandButton("移除所选", Mdl2Icons.GetBitmap("\uE711", Color.FromArgb(72, 82, 93)), false);
+            removeSelectedButton.Margin = new Padding(0, 4, 8, 4);
+            removeSelectedButton.Enabled = false;
+            toolbar.Controls.Add(removeSelectedButton, 2, 0);
 
-            openRuleButton = CreateCommandButton("编辑补充规则", Mdl2Icons.GetBitmap("\uE713", Navy), false);
+            clearButton = CreateCommandButton("清空", Mdl2Icons.GetBitmap("\uE74D", Color.FromArgb(72, 82, 93)), false);
+            clearButton.Margin = new Padding(0, 4, 8, 4);
+            toolbar.Controls.Add(clearButton, 3, 0);
+
+            openOutputButton = CreateCommandButton("打开结果", Mdl2Icons.GetBitmap("\uE838", Navy), false);
+            openOutputButton.Margin = new Padding(0, 4, 8, 4);
+            openOutputButton.Enabled = false;
+            toolbar.Controls.Add(openOutputButton, 5, 0);
+
+            openRuleButton = CreateCommandButton("编辑规则", Mdl2Icons.GetBitmap("\uE713", Navy), false);
             openRuleButton.Margin = new Padding(0, 4, 8, 4);
-            toolbar.Controls.Add(openRuleButton, 4, 0);
+            toolbar.Controls.Add(openRuleButton, 6, 0);
 
             startButton = CreateCommandButton("开始脱敏", Mdl2Icons.GetBitmap("\uE768", Color.White), true);
             startButton.Margin = new Padding(8, 4, 0, 4);
-            toolbar.Controls.Add(startButton, 5, 0);
+            toolbar.Controls.Add(startButton, 7, 0);
             return toolbar;
         }
 
@@ -381,7 +447,11 @@ namespace OneClickRedactor
             gridHost.BackColor = Color.White;
 
             fileGrid = CreateDataGrid();
+            fileGrid.MultiSelect = true;
             fileGrid.CellFormatting += FileGrid_CellFormatting;
+            fileGrid.SelectionChanged += FileGrid_SelectionChanged;
+            fileGrid.CellDoubleClick += FileGrid_CellDoubleClick;
+            fileGrid.CellMouseDown += FileGrid_CellMouseDown;
             fileGrid.Columns.Add(CreateImageColumn("FileIcon", 38));
             fileGrid.Columns.Add(CreateTextColumn("FileName", "文件名称", 190, DataGridViewAutoSizeColumnMode.None));
             fileGrid.Columns.Add(CreateTextColumn("FileType", "类型", 82, DataGridViewAutoSizeColumnMode.None));
@@ -389,6 +459,10 @@ namespace OneClickRedactor
             fileGrid.Columns.Add(CreateTextColumn("Directory", "所在路径", 260, DataGridViewAutoSizeColumnMode.Fill));
             fileGrid.Columns.Add(CreateTextColumn("Status", "状态", 110, DataGridViewAutoSizeColumnMode.None));
             fileGrid.Columns.Add(CreateTextColumn("Hits", "命中", 72, DataGridViewAutoSizeColumnMode.None));
+            var fileMenu = new ContextMenuStrip();
+            fileMenu.Items.Add(new ToolStripMenuItem("打开所在文件夹", Mdl2Icons.GetBitmap("\uE838", Navy), OpenSelectedSourceFolder_Click));
+            fileMenu.Items.Add(new ToolStripMenuItem("移除所选", Mdl2Icons.GetBitmap("\uE711", Color.FromArgb(72, 82, 93)), RemoveSelectedButton_Click));
+            fileGrid.ContextMenuStrip = fileMenu;
             gridHost.Controls.Add(fileGrid);
 
             emptyStatePanel = new Panel();
@@ -428,23 +502,35 @@ namespace OneClickRedactor
 
         private Control BuildOptionsStrip()
         {
+            var shell = new Panel();
+            shell.Dock = DockStyle.Fill;
+            shell.Margin = new Padding(16, 4, 16, 4);
+            shell.BackColor = Color.White;
+            shell.BorderStyle = BorderStyle.FixedSingle;
+
             var options = new TableLayoutPanel();
             options.Dock = DockStyle.Fill;
-            options.Margin = new Padding(16, 4, 16, 4);
-            options.Padding = new Padding(14, 0, 12, 0);
+            options.Margin = new Padding(0);
+            options.Padding = new Padding(12, 0, 12, 0);
             options.BackColor = Color.White;
-            options.CellBorderStyle = TableLayoutPanelCellBorderStyle.None;
-            options.ColumnCount = 4;
-            options.RowCount = 1;
-            options.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 102));
-            options.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
-            options.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
-            options.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            options.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            options.Paint += delegate(object sender, PaintEventArgs e)
-            {
-                ControlPaint.DrawBorder(e.Graphics, options.ClientRectangle, Border, ButtonBorderStyle.Solid);
-            };
+            options.ColumnCount = 1;
+            options.RowCount = 2;
+            options.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            options.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+            shell.Controls.Add(options);
+
+            var recognitionRow = new TableLayoutPanel();
+            recognitionRow.Dock = DockStyle.Fill;
+            recognitionRow.Margin = new Padding(0);
+            recognitionRow.ColumnCount = 5;
+            recognitionRow.RowCount = 1;
+            recognitionRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 102));
+            recognitionRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));
+            recognitionRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 210));
+            recognitionRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
+            recognitionRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            recognitionRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            options.Controls.Add(recognitionRow, 0, 0);
 
             var optionTitle = new Label();
             optionTitle.Dock = DockStyle.Fill;
@@ -452,15 +538,19 @@ namespace OneClickRedactor
             optionTitle.Font = new Font(Font, FontStyle.Bold);
             optionTitle.ForeColor = Navy;
             optionTitle.TextAlign = ContentAlignment.MiddleLeft;
-            options.Controls.Add(optionTitle, 0, 0);
+            recognitionRow.Controls.Add(optionTitle, 0, 0);
 
             includeSubfoldersCheckBox = CreateOptionCheckBox("文件夹含子目录");
             includeSubfoldersCheckBox.Checked = true;
-            options.Controls.Add(includeSubfoldersCheckBox, 1, 0);
+            recognitionRow.Controls.Add(includeSubfoldersCheckBox, 1, 0);
 
             addressGuessCheckBox = CreateOptionCheckBox("加强地址模糊识别");
             addressGuessCheckBox.Checked = true;
-            options.Controls.Add(addressGuessCheckBox, 2, 0);
+            recognitionRow.Controls.Add(addressGuessCheckBox, 2, 0);
+
+            skipRedactedCheckBox = CreateOptionCheckBox("跳过已脱敏文件和报告");
+            skipRedactedCheckBox.Checked = true;
+            recognitionRow.Controls.Add(skipRedactedCheckBox, 3, 0);
 
             var safetyLabel = new Label();
             safetyLabel.Dock = DockStyle.Fill;
@@ -468,13 +558,75 @@ namespace OneClickRedactor
             safetyLabel.ForeColor = Success;
             safetyLabel.TextAlign = ContentAlignment.MiddleRight;
             safetyLabel.Padding = new Padding(0, 0, 4, 0);
-            options.Controls.Add(safetyLabel, 3, 0);
-            return options;
+            recognitionRow.Controls.Add(safetyLabel, 4, 0);
+
+            var outputRow = new TableLayoutPanel();
+            outputRow.Dock = DockStyle.Fill;
+            outputRow.Margin = new Padding(0);
+            outputRow.ColumnCount = 6;
+            outputRow.RowCount = 1;
+            outputRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 102));
+            outputRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+            outputRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            outputRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
+            outputRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 174));
+            outputRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 184));
+            outputRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            options.Controls.Add(outputRow, 0, 1);
+
+            var outputTitle = new Label();
+            outputTitle.Dock = DockStyle.Fill;
+            outputTitle.Text = "输出与结果";
+            outputTitle.Font = new Font(Font, FontStyle.Bold);
+            outputTitle.ForeColor = Navy;
+            outputTitle.TextAlign = ContentAlignment.MiddleLeft;
+            outputRow.Controls.Add(outputTitle, 0, 0);
+
+            outputModeComboBox = new ComboBox();
+            outputModeComboBox.Dock = DockStyle.Fill;
+            outputModeComboBox.Margin = new Padding(8, 9, 8, 9);
+            outputModeComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
+            outputModeComboBox.Items.Add("原文件所在目录");
+            outputModeComboBox.Items.Add("指定文件夹");
+            outputModeComboBox.SelectedIndex = 0;
+            outputRow.Controls.Add(outputModeComboBox, 1, 0);
+
+            outputDirectoryTextBox = new TextBox();
+            outputDirectoryTextBox.Dock = DockStyle.Fill;
+            outputDirectoryTextBox.Margin = new Padding(0, 11, 8, 9);
+            outputDirectoryTextBox.BorderStyle = BorderStyle.FixedSingle;
+            outputDirectoryTextBox.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
+            outputDirectoryTextBox.AutoCompleteSource = AutoCompleteSource.FileSystemDirectories;
+            outputRow.Controls.Add(outputDirectoryTextBox, 2, 0);
+
+            browseOutputButton = CreateCommandButton("浏览...", Mdl2Icons.GetBitmap("\uE8B7", Navy), false);
+            browseOutputButton.Margin = new Padding(0, 7, 8, 7);
+            outputRow.Controls.Add(browseOutputButton, 3, 0);
+
+            saveBatchReportCheckBox = CreateOptionCheckBox("生成批次总报告");
+            saveBatchReportCheckBox.Checked = true;
+            outputRow.Controls.Add(saveBatchReportCheckBox, 4, 0);
+
+            openAfterCompletionCheckBox = CreateOptionCheckBox("完成后打开结果目录");
+            outputRow.Controls.Add(openAfterCompletionCheckBox, 5, 0);
+            return shell;
         }
 
         private Control BuildLogSection()
         {
             var section = CreateSectionShell("处理日志", out logCountLabel);
+            var header = FindControlRecursive(section, "SectionHeader") as TableLayoutPanel;
+            if (header != null)
+            {
+                header.ColumnCount = 3;
+                header.ColumnStyles.Clear();
+                header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+                header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 100));
+                header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 108));
+                header.SetColumn(logCountLabel, 1);
+                clearLogButton = CreateHeaderActionButton("清空日志", Mdl2Icons.GetBitmap("\uE74D", MutedText));
+                header.Controls.Add(clearLogButton, 2, 0);
+            }
             logGrid = CreateDataGrid();
             logGrid.CellFormatting += LogGrid_CellFormatting;
             logGrid.Columns.Add(CreateTextColumn("Time", "时间", 92, DataGridViewAutoSizeColumnMode.None));
@@ -555,6 +707,7 @@ namespace OneClickRedactor
             shell.Controls.Add(layout);
 
             var header = new TableLayoutPanel();
+            header.Name = "SectionHeader";
             header.Dock = DockStyle.Fill;
             header.Margin = new Padding(0);
             header.Padding = new Padding(12, 0, 12, 0);
@@ -647,7 +800,7 @@ namespace OneClickRedactor
             button.Image = image;
             button.ImageAlign = ContentAlignment.MiddleLeft;
             button.TextImageRelation = TextImageRelation.ImageBeforeText;
-            button.Padding = new Padding(12, 0, 10, 0);
+            button.Padding = new Padding(8, 0, 6, 0);
             button.Font = new Font(Font, primary ? FontStyle.Bold : FontStyle.Regular);
             button.FlatStyle = FlatStyle.Flat;
             button.UseVisualStyleBackColor = false;
@@ -667,6 +820,25 @@ namespace OneClickRedactor
             {
                 button.BackColor = primary ? PrimaryBlue : Color.White;
             };
+            return button;
+        }
+
+        private Button CreateHeaderActionButton(string text, Image image)
+        {
+            var button = new Button();
+            button.Dock = DockStyle.Fill;
+            button.Margin = new Padding(4, 5, 0, 5);
+            button.Text = text;
+            button.Image = image;
+            button.ImageAlign = ContentAlignment.MiddleLeft;
+            button.TextImageRelation = TextImageRelation.ImageBeforeText;
+            button.FlatStyle = FlatStyle.Flat;
+            button.FlatAppearance.BorderSize = 0;
+            button.BackColor = Color.White;
+            button.ForeColor = MutedText;
+            button.Cursor = Cursors.Hand;
+            button.MouseEnter += delegate { button.BackColor = Color.FromArgb(247, 250, 253); };
+            button.MouseLeave += delegate { button.BackColor = Color.White; };
             return button;
         }
 
@@ -707,11 +879,163 @@ namespace OneClickRedactor
             }
         }
 
+        private void RemoveSelectedButton_Click(object sender, EventArgs e)
+        {
+            if (worker != null && worker.IsBusy)
+            {
+                return;
+            }
+
+            var selectedRows = fileGrid.SelectedRows.Cast<DataGridViewRow>()
+                .OrderByDescending(row => row.Index)
+                .ToArray();
+            if (selectedRows.Length == 0)
+            {
+                return;
+            }
+
+            foreach (var row in selectedRows)
+            {
+                var path = row.Tag as string;
+                if (!string.IsNullOrEmpty(path))
+                {
+                    files.RemoveAll(item => string.Equals(item, path, StringComparison.OrdinalIgnoreCase));
+                    outputPaths.Remove(path);
+                }
+                fileGrid.Rows.RemoveAt(row.Index);
+            }
+
+            UpdateFileSummary();
+            UpdateSelectionActions();
+            statusLabel.Text = "已移除 " + selectedRows.Length + " 个文件。";
+        }
+
+        private void OpenSelectedSourceFolder_Click(object sender, EventArgs e)
+        {
+            if (fileGrid.SelectedRows.Count == 0)
+            {
+                return;
+            }
+
+            var path = fileGrid.SelectedRows[0].Tag as string;
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            {
+                return;
+            }
+
+            try
+            {
+                System.Diagnostics.Process.Start("explorer.exe", "/select,\"" + path + "\"");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "无法打开文件所在位置：" + ex.Message, "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void FileGrid_SelectionChanged(object sender, EventArgs e)
+        {
+            UpdateSelectionActions();
+        }
+
+        private void FileGrid_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0)
+            {
+                return;
+            }
+
+            var path = fileGrid.Rows[e.RowIndex].Tag as string;
+            string outputPath;
+            if (string.IsNullOrEmpty(path) || !outputPaths.TryGetValue(path, out outputPath) || !File.Exists(outputPath))
+            {
+                return;
+            }
+
+            try
+            {
+                System.Diagnostics.Process.Start(outputPath);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "无法打开脱敏结果：" + ex.Message, "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void FileGrid_CellMouseDown(object sender, DataGridViewCellMouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Right || e.RowIndex < 0)
+            {
+                return;
+            }
+
+            if (!fileGrid.Rows[e.RowIndex].Selected)
+            {
+                fileGrid.ClearSelection();
+                fileGrid.Rows[e.RowIndex].Selected = true;
+            }
+            if (e.ColumnIndex >= 0)
+            {
+                fileGrid.CurrentCell = fileGrid.Rows[e.RowIndex].Cells[e.ColumnIndex];
+            }
+        }
+
+        private void BrowseOutputButton_Click(object sender, EventArgs e)
+        {
+            using (var dialog = new FolderBrowserDialog())
+            {
+                dialog.Description = "选择统一保存脱敏文件的文件夹";
+                if (Directory.Exists(outputDirectoryTextBox.Text))
+                {
+                    dialog.SelectedPath = outputDirectoryTextBox.Text;
+                }
+                if (dialog.ShowDialog(this) == DialogResult.OK)
+                {
+                    outputDirectoryTextBox.Text = dialog.SelectedPath;
+                }
+            }
+        }
+
+        private void OutputModeComboBox_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            UpdateOutputControls();
+        }
+
+        private void OpenOutputButton_Click(object sender, EventArgs e)
+        {
+            var directory = ResolveOutputDirectoryForOpening();
+            if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
+            {
+                MessageBox.Show(this, "暂时没有可打开的结果目录。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            try
+            {
+                System.Diagnostics.Process.Start("explorer.exe", "\"" + directory + "\"");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "无法打开结果目录：" + ex.Message, "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void ClearLogButton_Click(object sender, EventArgs e)
+        {
+            logGrid.Rows.Clear();
+            UpdateLogSummary();
+            statusLabel.Text = "日志已清空";
+        }
+
         private void ClearButton_Click(object sender, EventArgs e)
         {
             files.Clear();
+            outputPaths.Clear();
             fileGrid.Rows.Clear();
+            lastOutputDirectory = null;
+            openOutputButton.Enabled = false;
             UpdateFileSummary();
+            UpdateSelectionActions();
             statusLabel.Text = "已清空";
         }
 
@@ -741,6 +1065,12 @@ namespace OneClickRedactor
                 return;
             }
 
+            string outputDirectory;
+            if (!TryGetProcessingOutputDirectory(out outputDirectory))
+            {
+                return;
+            }
+
             SetBusy(true);
             progressBar.Value = 0;
             UpdateProgressText(0);
@@ -749,10 +1079,16 @@ namespace OneClickRedactor
             ResetFileStatuses();
             AppendLog("开始处理，共 " + files.Count + " 个文件。");
             AppendLog("补充规则文件：" + RuleFile.Path);
+            AppendLog(string.IsNullOrEmpty(outputDirectory)
+                ? "输出位置：各原文件所在目录"
+                : "统一输出位置：" + outputDirectory);
 
             var options = new ProcessingOptions();
             options.Files = files.ToArray();
             options.EnableAddressGuess = addressGuessCheckBox.Checked;
+            options.OutputDirectory = outputDirectory;
+            options.WriteBatchReport = saveBatchReportCheckBox.Checked;
+            options.OpenOutputOnCompletion = openAfterCompletionCheckBox.Checked;
             worker.RunWorkerAsync(options);
         }
 
@@ -776,13 +1112,21 @@ namespace OneClickRedactor
         private void AddPaths(IEnumerable<string> paths)
         {
             var discovered = new List<string>();
+            var skipped = 0;
             foreach (var path in paths)
             {
                 if (File.Exists(path))
                 {
                     if (FileProcessor.IsSupported(path))
                     {
-                        discovered.Add(path);
+                        if (skipRedactedCheckBox.Checked && FileProcessor.IsGeneratedArtifact(path))
+                        {
+                            skipped++;
+                        }
+                        else
+                        {
+                            discovered.Add(path);
+                        }
                     }
                 }
                 else if (Directory.Exists(path))
@@ -794,7 +1138,14 @@ namespace OneClickRedactor
                         {
                             if (FileProcessor.IsSupported(file))
                             {
-                                discovered.Add(file);
+                                if (skipRedactedCheckBox.Checked && FileProcessor.IsGeneratedArtifact(file))
+                                {
+                                    skipped++;
+                                }
+                                else
+                                {
+                                    discovered.Add(file);
+                                }
                             }
                         }
                     }
@@ -817,7 +1168,12 @@ namespace OneClickRedactor
             }
 
             UpdateFileSummary();
-            statusLabel.Text = "已添加 " + added + " 个文件，当前共 " + files.Count + " 个。";
+            statusLabel.Text = "已添加 " + added + " 个文件，当前共 " + files.Count + " 个"
+                + (skipped > 0 ? "；跳过 " + skipped + " 个已脱敏文件或报告。" : "。");
+            if (skipped > 0)
+            {
+                AppendLog("已跳过 " + skipped + " 个已脱敏文件或报告，避免重复处理。");
+            }
         }
 
         private void Worker_DoWork(object sender, DoWorkEventArgs e)
@@ -832,12 +1188,12 @@ namespace OneClickRedactor
             {
                 var file = options.Files[i];
                 var percent = options.Files.Length == 0 ? 0 : (int)Math.Round((i * 100.0) / options.Files.Length);
-                workerRef.ReportProgress(percent, new ProcessingProgress(file, "处理中", "正在处理：" + file, false, -1));
+                workerRef.ReportProgress(percent, new ProcessingProgress(file, "处理中", "正在处理：" + file, false, -1, null));
 
                 FileProcessingResult result;
                 try
                 {
-                    result = FileProcessor.Process(file, anonymizer);
+                    result = FileProcessor.Process(file, anonymizer, options.OutputDirectory);
                 }
                 catch (Exception ex)
                 {
@@ -855,11 +1211,12 @@ namespace OneClickRedactor
                         result.Success ? "已完成" : "失败",
                         result.ToLogLine(),
                         true,
-                        result.Success ? result.TotalReplacements : -1));
+                        result.Success ? result.TotalReplacements : -1,
+                        result.Success ? result.OutputPath : null));
             }
 
-            workerRef.ReportProgress(100, new ProcessingProgress(null, null, "处理完成。", true, -1));
-            e.Result = allResults;
+            workerRef.ReportProgress(100, new ProcessingProgress(null, null, "处理完成。", true, -1, null));
+            e.Result = new BatchProcessingResult(allResults, options);
         }
 
         private void Worker_ProgressChanged(object sender, ProgressChangedEventArgs e)
@@ -876,6 +1233,10 @@ namespace OneClickRedactor
                 if (!string.IsNullOrEmpty(update.FilePath) && !string.IsNullOrEmpty(update.Status))
                 {
                     UpdateFileRowStatus(update.FilePath, update.Status, update.Replacements);
+                    if (!string.IsNullOrEmpty(update.OutputPath))
+                    {
+                        outputPaths[update.FilePath] = update.OutputPath;
+                    }
                 }
 
                 if (!string.IsNullOrEmpty(update.Message))
@@ -893,6 +1254,7 @@ namespace OneClickRedactor
         {
             SetBusy(false);
             progressBar.Value = 100;
+            UpdateProgressText(100);
 
             if (e.Error != null)
             {
@@ -901,20 +1263,36 @@ namespace OneClickRedactor
                 return;
             }
 
-            var results = e.Result as List<FileProcessingResult>;
-            if (results == null)
+            var batch = e.Result as BatchProcessingResult;
+            if (batch == null)
             {
                 statusLabel.Text = "处理完成";
                 return;
             }
+
+            var results = batch.Results;
 
             var success = results.Count(x => x.Success);
             var changed = results.Count(x => x.Success && x.TotalReplacements > 0);
             var failed = results.Count - success;
             AppendLog("汇总：成功 " + success + " 个，命中脱敏规则 " + changed + " 个，失败 " + failed + " 个。");
             statusLabel.Text = "完成：成功 " + success + " 个，失败 " + failed + " 个。";
+            batchSummaryLabel.Text = "成功 " + success + " · 失败 " + failed;
 
-            TryWriteBatchReport(results);
+            var firstOutput = results.FirstOrDefault(result => result.Success && !string.IsNullOrEmpty(result.OutputPath));
+            lastOutputDirectory = !string.IsNullOrEmpty(batch.Options.OutputDirectory)
+                ? batch.Options.OutputDirectory
+                : firstOutput == null ? null : System.IO.Path.GetDirectoryName(firstOutput.OutputPath);
+
+            if (batch.Options.WriteBatchReport)
+            {
+                TryWriteBatchReport(results, batch.Options.OutputDirectory);
+            }
+            UpdateSelectionActions();
+            if (batch.Options.OpenOutputOnCompletion && success > 0)
+            {
+                OpenOutputButton_Click(this, EventArgs.Empty);
+            }
         }
 
         private void SetBusy(bool busy)
@@ -922,11 +1300,24 @@ namespace OneClickRedactor
             addFilesButton.Enabled = !busy;
             addFolderButton.Enabled = !busy;
             clearButton.Enabled = !busy;
+            removeSelectedButton.Enabled = !busy && fileGrid.SelectedRows.Count > 0;
             startButton.Enabled = !busy;
             startButton.Text = busy ? "正在脱敏" : "开始脱敏";
             openRuleButton.Enabled = !busy;
+            openOutputButton.Enabled = !busy && ResolveOutputDirectoryForOpening() != null;
+            clearLogButton.Enabled = !busy;
             includeSubfoldersCheckBox.Enabled = !busy;
             addressGuessCheckBox.Enabled = !busy;
+            skipRedactedCheckBox.Enabled = !busy;
+            saveBatchReportCheckBox.Enabled = !busy;
+            openAfterCompletionCheckBox.Enabled = !busy;
+            outputModeComboBox.Enabled = !busy;
+            UpdateOutputControls();
+            if (!busy)
+            {
+                UpdateFileSummary();
+                UpdateSelectionActions();
+            }
         }
 
         private void AppendLog(string message)
@@ -994,6 +1385,90 @@ namespace OneClickRedactor
             }
         }
 
+        private void UpdateOutputControls()
+        {
+            if (outputModeComboBox == null || outputDirectoryTextBox == null || browseOutputButton == null)
+            {
+                return;
+            }
+
+            var useCustomDirectory = outputModeComboBox.SelectedIndex == 1;
+            var available = worker == null || !worker.IsBusy;
+            outputDirectoryTextBox.Enabled = useCustomDirectory && available;
+            browseOutputButton.Enabled = useCustomDirectory && available;
+            if (useCustomDirectory && string.IsNullOrWhiteSpace(outputDirectoryTextBox.Text))
+            {
+                outputDirectoryTextBox.Text = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+                    "脱敏输出");
+            }
+        }
+
+        private bool TryGetProcessingOutputDirectory(out string outputDirectory)
+        {
+            outputDirectory = null;
+            if (outputModeComboBox.SelectedIndex != 1)
+            {
+                return true;
+            }
+
+            var candidate = (outputDirectoryTextBox.Text ?? "").Trim();
+            if (candidate.Length == 0)
+            {
+                MessageBox.Show(this, "请选择脱敏文件的输出目录。", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return false;
+            }
+
+            try
+            {
+                outputDirectory = System.IO.Path.GetFullPath(candidate);
+                Directory.CreateDirectory(outputDirectory);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "无法使用指定输出目录：" + ex.Message, "提示", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+        }
+
+        private string ResolveOutputDirectoryForOpening()
+        {
+            if (fileGrid.SelectedRows.Count > 0)
+            {
+                var sourcePath = fileGrid.SelectedRows[0].Tag as string;
+                string outputPath;
+                if (!string.IsNullOrEmpty(sourcePath)
+                    && outputPaths.TryGetValue(sourcePath, out outputPath)
+                    && File.Exists(outputPath))
+                {
+                    return System.IO.Path.GetDirectoryName(outputPath);
+                }
+            }
+
+            if (!string.IsNullOrEmpty(lastOutputDirectory) && Directory.Exists(lastOutputDirectory))
+            {
+                return lastOutputDirectory;
+            }
+
+            return null;
+        }
+
+        private void UpdateSelectionActions()
+        {
+            if (removeSelectedButton != null)
+            {
+                removeSelectedButton.Enabled = (worker == null || !worker.IsBusy) && fileGrid.SelectedRows.Count > 0;
+            }
+
+            if (openOutputButton != null)
+            {
+                openOutputButton.Enabled = (worker == null || !worker.IsBusy)
+                    && (!string.IsNullOrEmpty(ResolveOutputDirectoryForOpening())
+                        || outputPaths.Values.Any(File.Exists));
+            }
+        }
+
         private void UpdateFileSummary()
         {
             fileCountLabel.Text = "共 " + files.Count + " 个文件";
@@ -1002,6 +1477,10 @@ namespace OneClickRedactor
             if (emptyStatePanel.Visible)
             {
                 emptyStatePanel.BringToFront();
+            }
+            if (clearButton != null)
+            {
+                clearButton.Enabled = (worker == null || !worker.IsBusy) && files.Count > 0;
             }
         }
 
@@ -1086,11 +1565,15 @@ namespace OneClickRedactor
             e.CellStyle.ForeColor = level == "成功" ? Success : level == "失败" ? Danger : PrimaryBlue;
         }
 
-        private void TryWriteBatchReport(IList<FileProcessingResult> results)
+        private void TryWriteBatchReport(IList<FileProcessingResult> results, string outputDirectory)
         {
             try
             {
-                var reportPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "最近一次脱敏报告.txt");
+                var reportDirectory = string.IsNullOrEmpty(outputDirectory)
+                    ? AppDomain.CurrentDomain.BaseDirectory
+                    : outputDirectory;
+                Directory.CreateDirectory(reportDirectory);
+                var reportPath = System.IO.Path.Combine(reportDirectory, "最近一次脱敏报告.txt");
                 var lines = new List<string>();
                 lines.Add("一键脱敏工具处理报告");
                 lines.Add("生成时间：" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
@@ -1113,13 +1596,14 @@ namespace OneClickRedactor
 
     internal sealed class ProcessingProgress
     {
-        public ProcessingProgress(string filePath, string status, string message, bool writeLog, int replacements)
+        public ProcessingProgress(string filePath, string status, string message, bool writeLog, int replacements, string outputPath)
         {
             FilePath = filePath;
             Status = status;
             Message = message;
             WriteLog = writeLog;
             Replacements = replacements;
+            OutputPath = outputPath;
         }
 
         public string FilePath { get; private set; }
@@ -1127,6 +1611,19 @@ namespace OneClickRedactor
         public string Message { get; private set; }
         public bool WriteLog { get; private set; }
         public int Replacements { get; private set; }
+        public string OutputPath { get; private set; }
+    }
+
+    internal sealed class BatchProcessingResult
+    {
+        public BatchProcessingResult(IList<FileProcessingResult> results, ProcessingOptions options)
+        {
+            Results = results;
+            Options = options;
+        }
+
+        public IList<FileProcessingResult> Results { get; private set; }
+        public ProcessingOptions Options { get; private set; }
     }
 
     internal sealed class DoubleBufferedDataGridView : DataGridView
@@ -1134,6 +1631,27 @@ namespace OneClickRedactor
         public DoubleBufferedDataGridView()
         {
             DoubleBuffered = true;
+        }
+    }
+
+    internal static class ApplicationIcon
+    {
+        public static Icon Load()
+        {
+            try
+            {
+                using (var extracted = Icon.ExtractAssociatedIcon(Application.ExecutablePath))
+                {
+                    if (extracted != null)
+                    {
+                        return (Icon)extracted.Clone();
+                    }
+                }
+            }
+            catch
+            {
+            }
+            return ShellStockIcons.GetIcon(77, false);
         }
     }
 
@@ -1213,6 +1731,9 @@ namespace OneClickRedactor
     {
         public string[] Files;
         public bool EnableAddressGuess;
+        public string OutputDirectory;
+        public bool WriteBatchReport;
+        public bool OpenOutputOnCompletion;
     }
 
     internal static class RuleFile
@@ -1727,7 +2248,22 @@ namespace OneClickRedactor
             return SupportedExtensions.Contains(System.IO.Path.GetExtension(path));
         }
 
+        public static bool IsGeneratedArtifact(string path)
+        {
+            var name = System.IO.Path.GetFileName(path) ?? "";
+            return name.IndexOf("_已脱敏", StringComparison.OrdinalIgnoreCase) >= 0
+                || name.EndsWith(".脱敏报告.txt", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "最近一次脱敏报告.txt", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "命令行脱敏报告.txt", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(name, "命令行用法.txt", StringComparison.OrdinalIgnoreCase);
+        }
+
         public static FileProcessingResult Process(string sourcePath, Anonymizer anonymizer)
+        {
+            return Process(sourcePath, anonymizer, null);
+        }
+
+        public static FileProcessingResult Process(string sourcePath, Anonymizer anonymizer, string outputDirectory)
         {
             if (!File.Exists(sourcePath))
             {
@@ -1736,7 +2272,7 @@ namespace OneClickRedactor
 
             var result = new FileProcessingResult(sourcePath);
             var extension = System.IO.Path.GetExtension(sourcePath).ToLowerInvariant();
-            result.OutputPath = BuildOutputPath(sourcePath);
+            result.OutputPath = BuildOutputPath(sourcePath, outputDirectory);
 
             if (extension == ".txt" || extension == ".csv")
             {
@@ -1755,9 +2291,16 @@ namespace OneClickRedactor
             return result;
         }
 
-        private static string BuildOutputPath(string sourcePath)
+        private static string BuildOutputPath(string sourcePath, string outputDirectory)
         {
-            var directory = System.IO.Path.GetDirectoryName(sourcePath);
+            var directory = string.IsNullOrEmpty(outputDirectory)
+                ? System.IO.Path.GetDirectoryName(sourcePath)
+                : outputDirectory;
+            if (string.IsNullOrEmpty(directory))
+            {
+                directory = AppDomain.CurrentDomain.BaseDirectory;
+            }
+            Directory.CreateDirectory(directory);
             var name = System.IO.Path.GetFileNameWithoutExtension(sourcePath);
             var extension = System.IO.Path.GetExtension(sourcePath);
             var candidate = System.IO.Path.Combine(directory, name + "_已脱敏" + extension);
@@ -1766,7 +2309,18 @@ namespace OneClickRedactor
                 return candidate;
             }
 
-            return System.IO.Path.Combine(directory, name + "_已脱敏_" + DateTime.Now.ToString("yyyyMMddHHmmss") + extension);
+            var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+            for (var sequence = 0; sequence < 1000; sequence++)
+            {
+                var suffix = sequence == 0 ? timestamp : timestamp + "_" + sequence;
+                candidate = System.IO.Path.Combine(directory, name + "_已脱敏_" + suffix + extension);
+                if (!File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return System.IO.Path.Combine(directory, name + "_已脱敏_" + Guid.NewGuid().ToString("N") + extension);
         }
 
         private static void ProcessTextFile(string sourcePath, string outputPath, Anonymizer anonymizer, FileProcessingResult result)
@@ -1826,9 +2380,10 @@ namespace OneClickRedactor
 
         private static void ProcessBinaryWordFile(string sourcePath, string outputPath, Anonymizer anonymizer, FileProcessingResult result)
         {
-            HWPFDocument document;
+            IList<BinaryWordParagraphEdit> edits;
             using (var input = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
+                HWPFDocument document;
                 try
                 {
                     document = new HWPFDocument(input);
@@ -1837,24 +2392,23 @@ namespace OneClickRedactor
                 {
                     throw new InvalidDataException("无法读取该 .doc 文件。文件可能已加密、损坏，或并非 Word 97-2003 二进制格式。", ex);
                 }
+
+                var ranges = GetBinaryWordRanges(document);
+                foreach (var range in ranges)
+                {
+                    LearnNamesFromBinaryWordRange(range, anonymizer);
+                }
+
+                edits = BuildBinaryWordEdits(ranges, anonymizer, result.Stats);
+
+                if (edits.Count == 0)
+                {
+                    File.Copy(sourcePath, outputPath, false);
+                    return;
+                }
             }
 
-            var ranges = GetBinaryWordRanges(document);
-            foreach (var range in ranges)
-            {
-                LearnNamesFromBinaryWordRange(range, anonymizer);
-            }
-
-            var edits = BuildBinaryWordEdits(ranges, anonymizer, result.Stats);
-
-            if (edits.Count == 0)
-            {
-                File.Copy(sourcePath, outputPath, false);
-                return;
-            }
-
-            result.Notes.Add("旧版 .doc 使用兼容脱敏模式；为保护二进制文档结构，过长的自定义替换内容会自动缩短。");
-            ApplyBinaryWordEdits(document, edits);
+            result.Notes.Add("旧版 .doc 使用定长兼容脱敏模式；原二进制结构保持不变，较短替换会使用星号补齐。");
 
             var tempPath = outputPath + ".tmp";
             if (File.Exists(tempPath))
@@ -1864,10 +2418,7 @@ namespace OneClickRedactor
 
             try
             {
-                using (var output = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                {
-                    document.Write(output);
-                }
+                WriteBinaryWordPatchedCopy(sourcePath, tempPath, edits);
 
                 VerifyBinaryWordOutput(tempPath, edits);
 
@@ -1897,8 +2448,8 @@ namespace OneClickRedactor
 
                 foreach (var edit in edits)
                 {
-                    if (!string.IsNullOrEmpty(edit.ChangedText)
-                        && verificationText.IndexOf(edit.ChangedText, StringComparison.Ordinal) < 0)
+                    if (!string.IsNullOrEmpty(edit.WrittenText)
+                        && verificationText.IndexOf(edit.WrittenText, StringComparison.Ordinal) < 0)
                     {
                         throw new InvalidDataException("写出后的 .doc 文档未通过脱敏内容校验。");
                     }
@@ -1991,22 +2542,106 @@ namespace OneClickRedactor
             return length == text.Length ? text : text.Substring(0, length);
         }
 
-        private static void ApplyBinaryWordEdits(HWPFDocument document, IEnumerable<BinaryWordParagraphEdit> edits)
+        private static void WriteBinaryWordPatchedCopy(string sourcePath, string outputPath, IEnumerable<BinaryWordParagraphEdit> edits)
         {
-            foreach (var edit in edits.OrderByDescending(e => e.StartOffset))
+            var bytes = File.ReadAllBytes(sourcePath);
+            var processed = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var edit in edits)
             {
-                var overallRange = document.GetOverallRange();
-                var relativeOffset = edit.StartOffset - overallRange.StartOffset;
-                var currentText = overallRange.Text;
-                if (relativeOffset < 0
-                    || relativeOffset + edit.OriginalText.Length > currentText.Length
-                    || !string.Equals(currentText.Substring(relativeOffset, edit.OriginalText.Length), edit.OriginalText, StringComparison.Ordinal))
+                var key = edit.OriginalText + "\u0000" + edit.WrittenText;
+                if (!processed.Add(key))
                 {
-                    throw new InvalidDataException("处理 .doc 段落时发现文档内部位置异常，已停止写出以避免损坏文件。");
+                    continue;
                 }
 
-                overallRange.ReplaceText(edit.OriginalText, edit.ChangedText, relativeOffset);
+                if (ReplaceBinaryWordText(bytes, edit.OriginalText, edit.WrittenText) == 0)
+                {
+                    throw new InvalidDataException("无法在 .doc 二进制文字流中定位待脱敏段落，已停止写出以避免损坏文件。");
+                }
             }
+
+            File.WriteAllBytes(outputPath, bytes);
+        }
+
+        private static int ReplaceBinaryWordText(byte[] documentBytes, string original, string replacement)
+        {
+            var encodings = new[]
+            {
+                Encoding.Unicode,
+                Encoding.GetEncoding(936),
+                Encoding.GetEncoding(1252)
+            };
+            var replacements = 0;
+            foreach (var encoding in encodings)
+            {
+                byte[] originalBytes;
+                byte[] replacementBytes;
+                try
+                {
+                    var strictEncoding = (Encoding)encoding.Clone();
+                    strictEncoding.EncoderFallback = EncoderFallback.ExceptionFallback;
+                    originalBytes = strictEncoding.GetBytes(original);
+                    replacementBytes = strictEncoding.GetBytes(replacement);
+                }
+                catch (EncoderFallbackException)
+                {
+                    continue;
+                }
+                if (originalBytes.Length == 0 || originalBytes.Length != replacementBytes.Length)
+                {
+                    continue;
+                }
+                replacements += ReplaceAllByteSequences(documentBytes, originalBytes, replacementBytes);
+            }
+            return replacements;
+        }
+
+        private static int ReplaceAllByteSequences(byte[] source, byte[] original, byte[] replacement)
+        {
+            var replacements = 0;
+            for (var offset = 0; offset <= source.Length - original.Length;)
+            {
+                var matches = true;
+                for (var i = 0; i < original.Length; i++)
+                {
+                    if (source[offset + i] != original[i])
+                    {
+                        matches = false;
+                        break;
+                    }
+                }
+
+                if (!matches)
+                {
+                    offset++;
+                    continue;
+                }
+
+                Buffer.BlockCopy(replacement, 0, source, offset, replacement.Length);
+                replacements++;
+                offset += original.Length;
+            }
+            return replacements;
+        }
+
+        private static string NormalizeBinaryWordReplacement(string original, string changed)
+        {
+            changed = changed ?? "";
+            if (changed.Length > original.Length)
+            {
+                return changed.Substring(0, original.Length);
+            }
+            if (changed.Length == original.Length)
+            {
+                return changed;
+            }
+
+            var padding = new string('*', original.Length - changed.Length);
+            if (changed.Length > 0 && "。；，、,.!?！？;：:".IndexOf(changed[changed.Length - 1]) >= 0)
+            {
+                return changed.Substring(0, changed.Length - 1) + padding + changed[changed.Length - 1];
+            }
+            return changed + padding;
         }
 
         private sealed class BinaryWordParagraphEdit
@@ -2016,11 +2651,13 @@ namespace OneClickRedactor
                 StartOffset = startOffset;
                 OriginalText = originalText;
                 ChangedText = changedText;
+                WrittenText = NormalizeBinaryWordReplacement(originalText, changedText);
             }
 
             public int StartOffset { get; private set; }
             public string OriginalText { get; private set; }
             public string ChangedText { get; private set; }
+            public string WrittenText { get; private set; }
         }
 
         private static void ProcessOpenXmlFile(string sourcePath, string outputPath, string extension, Anonymizer anonymizer, FileProcessingResult result)

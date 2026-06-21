@@ -6,6 +6,7 @@ $lib = Join-Path $root "lib"
 $npoi = Join-Path $lib "NPOI.dll"
 $hwpf = Join-Path $lib "NPOI.ScratchPad.HWPF.dll"
 $sharpZip = Join-Path $lib "ICSharpCode.SharpZipLib.dll"
+$icon = Join-Path $root "assets\app.ico"
 $outputName = (-join @([char]0x4E00, [char]0x952E, [char]0x8131, [char]0x654F, [char]0x5DE5, [char]0x5177)) + ".exe"
 $output = Join-Path $root $outputName
 $csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
@@ -24,12 +25,17 @@ foreach ($dependency in @($npoi, $hwpf, $sharpZip)) {
     }
 }
 
+if (-not (Test-Path $icon)) {
+    throw "Application icon was not found: $icon"
+}
+
 & $csc `
     /nologo `
     /target:winexe `
     /platform:anycpu `
     /optimize+ `
     /codepage:65001 `
+    /win32icon:$icon `
     /out:$output `
     /reference:System.dll `
     /reference:System.Core.dll `
