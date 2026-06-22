@@ -7,7 +7,7 @@
 - 支持 DOC/DOCX/DOCM、XLSX/XLSM、PPTX/PPTM、TXT/CSV 离线处理。
 - 新增系统文件/文件夹选择、任务卡片、进度、日志、结果打开和报告生成。
 - Android 应用不申请网络权限，原文件保持不变。
-- 新增 JVM 单元测试、Android Runtime 测试和 GitHub Actions APK 构建。
+- 新增 JVM 单元测试和 Android Runtime 真机环境测试。
 
 ## v1.1.1 专业版
 
