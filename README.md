@@ -1,5 +1,38 @@
 # 一键脱敏工具
 
+同一套离线脱敏能力现已提供 Windows 桌面版和 Android 手机版。Android 版可直接安装 APK，在手机本地批量处理材料；文件不会上传，原件不会被修改。
+
+## Android 手机版
+
+Android 8.0 及以上系统可用。请从 GitHub Releases 下载 `one-click-redactor-android-v1.0.0.apk`，在手机上允许“安装未知应用”后直接安装。
+
+![一键脱敏工具 Android 专业版界面](design/android-final.png)
+
+手机版功能：
+
+- 支持 `doc/docx/docm`、`xlsx/xlsm`、`pptx/pptm`、`txt/csv`
+- 从系统文件选择器添加单个、多选文件或整个文件夹，可递归读取子目录
+- 身份证号、手机号、座机、邮箱、年龄、地址、角色姓名、企业名称、统一社会信用代码、银行卡、护照和车牌等规则与桌面版一致
+- 内置补充规则编辑器，支持 `原文` 和 `原文=>替换内容` 两种写法
+- 可跳过已脱敏结果，避免重复处理
+- 自动生成 `_已脱敏` 结果、单文件报告和可选批次总报告
+- 任务队列显示状态与命中数量，完成后可直接打开或发送结果
+- 完全离线运行，不申请网络权限；用户必须自行选择可写入的输出文件夹
+
+本地构建：
+
+```bash
+./gradlew testDebugUnitTest assembleDebug
+```
+
+连接 Android 设备或模拟器后，可运行真机环境测试（包含旧版 `.doc` 定长脱敏验证）：
+
+```bash
+./gradlew connectedDebugAndroidTest
+```
+
+APK 输出位置：`app/build/outputs/apk/debug/app-debug.apk`。
+
 这是一个完全离线运行的 Windows 桌面工具，用于批量脱敏 `doc/docx/docm`、`xlsx/xlsm`、`pptx/pptm`、`txt/csv` 文件。原始文件不会被修改，工具会生成带 `_已脱敏` 后缀的新文件和脱敏报告。
 
 ![一键脱敏工具专业版界面](design/professional-interface.png)

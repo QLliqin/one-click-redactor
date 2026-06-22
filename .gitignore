@@ -10,8 +10,16 @@
 bin/
 obj/
 
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+*.jks
+*.keystore
+
 # Case materials and generated redacted copies
 *.doc
+!app/src/androidTest/assets/legacy-test.doc
 *.docx
 *.docm
 *.xls
